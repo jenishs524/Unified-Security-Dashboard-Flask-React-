@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Unified Security Dashboard</title>
+    <script src="https://cdn.socket.io/4.5.0/socket.io.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, sans-serif; background: #0b0e14; color: #cdd6f4; padding:20px; }
+        .container { max-width:1400px; margin:auto; }
+        h1 { color: #f9e2af; border-bottom:2px solid #4a90e2; padding-bottom:10px; }
+        .stats { display:flex; gap:20px; flex-wrap:wrap; margin:20px 0; }
+        .stat-card { background: #1e2430; padding:15px 20px; border-radius:8px; flex:1; min-width:120px; text-align:center; }
+        .stat-card .number { font-size:2em; font-weight:bold; }
+        .stat-card .label { color:#b0b0b0; font-size:0.9em; }
+        .alert { background: #1e2430; margin:6px 0; padding:10px; border-left:4px solid #f38ba8; border-radius:4px; }
+        .alert .timestamp { color: #89b4fa; }
+        .alert .severity-Critical { color:#dc3545; font-weight:bold; }
+        .alert .severity-High { color:#fd7e14; font-weight:bold; }
+        .alert .severity-Medium { color:#ffc107; font-weight:bold; }
+        .alert .severity-Low { color:#28a745; font-weight:bold; }
+        .chart-container { width:400px; height:300px; margin:20px 0; }
+        .flex-row { display:flex; flex-wrap:wrap; gap:30px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔐 Unified Security Dashboard</h1>
+        <div class="stats" id="stats"></div>
+        <div class="flex-row">
+            <div class="chart-container">
+                <canvas id="severityChart"></canvas>
+            </div>
+            <div class="chart-container">
+                <canvas id="projectChart"></canvas>
+            </div>
+        </div>
+        <h2>Live Alerts</h2>
+        <div id="alerts"></div>
+    </div>
+
+    <script>
+        const socket = io();
+        const statsDiv = document.getElementById('stats');
+        const alertsDiv = document.getElementById('alerts');
+        let severityChart, projectChart;
+
+        function updateStats(stats) {
+            statsDiv.innerHTML = `
+                <div class="stat-card"><div class="number">${stats.total_alerts}</div><div class="label">Total Alerts</div></div>
+                <div class="stat-card"><div class="number" style="color:#dc3545;">${stats.critical}</div><div class="label">Critical</div></div>
+                <div class="stat-card"><div class="number" style="color:#fd7e14;">${stats.high}</div><div class="label">High</div></div>
+                <div class="stat-card"><div class="number" style="color:#ffc107;">${stats.medium}</div><div class="label">Medium</div></div>
+                <div class="stat-card"><div class="number" style="color:#28a745;">${stats.low}</div><div class="label">Low</div></div>
+                <div class="stat-card"><div class="number">${stats.projects}</div><div class="label">Projects</div></div>
+            `;
+            // Update charts
+            if (severityChart) {
+                severityChart.data.datasets[0].data = [stats.critical, stats.high, stats.medium, stats.low];
+                severityChart.update();
+            }
+            // For project chart, we need a count per project – we can approximate using alerts list, but we'll just update on new alert.
+        }
+
+        function renderAlerts(alerts) {
+            alertsDiv.innerHTML = '';
+            alerts.slice().reverse().forEach(a => {
+                const div = document.createElement('div');
+                div.className = 'alert';
+                div.innerHTML = `
+                    <div>
+                        <span class="timestamp">${a.timestamp}</span>
+                        <span class="severity-${a.severity}">${a.severity}</span>
+                        <strong>${a.project}</strong> – ${a.message}
+                    </div>
+                `;
+                alertsDiv.appendChild(div);
+            });
+        }
+
+        socket.on('connect', () => {
+            console.log('Connected to dashboard');
+        });
+
+        socket.on('alerts', (data) => {
+            renderAlerts(data);
+        });
+
+        socket.on('stats', (data) => {
+            updateStats(data);
+        });
+
+        socket.on('new_alert', (data) => {
+            // Prepend new alert
+            const div = document.createElement('div');
+            div.className = 'alert';
+            div.innerHTML = `
+                <div>
+                    <span class="timestamp">${data.timestamp}</span>
+                    <span class="severity-${data.severity}">${data.severity}</span>
+                    <strong>${data.project}</strong> – ${data.message}
+                </div>
+            `;
+            alertsDiv.prepend(div);
+            // Keep only last 50
+            while (alertsDiv.children.length > 50) {
+                alertsDiv.removeChild(alertsDiv.lastChild);
+            }
+            // Update stats are broadcast separately.
+        });
+
+        // Initialize charts
+        window.onload = function() {
+            const ctx1 = document.getElementById('severityChart').getContext('2d');
+            severityChart = new Chart(ctx1, {
+                type: 'pie',
+                data: {
+                    labels: ['Critical', 'High', 'Medium', 'Low'],
+                    datasets: [{
+                        data: [0, 0, 0, 0],
+                        backgroundColor: ['#dc3545', '#fd7e14', '#ffc107', '#28a745']
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { labels: { color: '#cdd6f4' } }
+                    }
+                }
+            });
+
+            const ctx2 = document.getElementById('projectChart').getContext('2d');
+            projectChart = new Chart(ctx2, {
+                type: 'bar',
+                data: {
+                    labels: ['Projects'],
+                    datasets: [{
+                        label: 'Active Projects',
+                        data: [0],
+                        backgroundColor: '#4a90e2'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { labels: { color: '#cdd6f4' } }
+                    },
+                    scales: {
+                        y: { ticks: { color: '#cdd6f4' } },
+                        x: { ticks: { color: '#cdd6f4' } }
+                    }
+                }
+            });
+        };
+    </script>
+</body>
+</html>
